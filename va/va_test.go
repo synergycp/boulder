@@ -30,6 +30,7 @@ import (
 	"github.com/letsencrypt/boulder/cdr"
 	"github.com/letsencrypt/boulder/cmd"
 	"github.com/letsencrypt/boulder/core"
+	"github.com/letsencrypt/boulder/features"
 	blog "github.com/letsencrypt/boulder/log"
 	"github.com/letsencrypt/boulder/metrics"
 	"github.com/letsencrypt/boulder/mocks"
@@ -92,7 +93,9 @@ func httpSrv(t *testing.T, token string) *httptest.Server {
 	currentToken := defaultToken
 
 	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.Host, "localhost:") && !strings.HasPrefix(r.Host, "other.valid:") {
+		if !strings.HasPrefix(r.Host, "localhost:") &&
+			!strings.HasPrefix(r.Host, "other.valid:") &&
+			!strings.HasPrefix(r.Host, "ipv4.and.ipv6.localhost") {
 			t.Errorf("Bad Host header: " + r.Host)
 		}
 		if strings.HasSuffix(r.URL.Path, path404) {
@@ -1116,4 +1119,134 @@ func TestParseResults(t *testing.T) {
 	test.AssertEquals(t, len(s.Unknown), 1)
 	test.Assert(t, s.Unknown[0] == &expected, "Incorrect record returned")
 	test.AssertNotError(t, err, "no error should be returned")
+}
+
+func TestFallbackAddress(t *testing.T) {
+	v6 := net.ParseIP("::1")
+	v4 := net.ParseIP("127.0.0.1")
+
+	testcases := []struct {
+		input  core.ValidationRecord
+		result net.IP
+	}{
+		{
+			// A validationRecord that used a v4 address should have a nil fallback
+			// address
+			core.ValidationRecord{
+				AddressUsed:       v4,
+				AddressesResolved: []net.IP{v4},
+			},
+			nil,
+		},
+		{
+			// A validationRecord that used a v6 address with no v4 addresses resolved
+			// should have a nil fallback address
+			core.ValidationRecord{
+				AddressUsed:       v6,
+				AddressesResolved: []net.IP{v6},
+			},
+			nil,
+		},
+		{
+			// A ValidationRecord that used a v6 address and had v4 addresses resolved
+			// should have a v4 fallback address
+			core.ValidationRecord{
+				AddressUsed:       v6,
+				AddressesResolved: []net.IP{v6, v4},
+			},
+			v4,
+		},
+		{
+			// A ValidationRecord that used a v6 address and has NO addresses resolved
+			// shouldn't happen but lets test that it gets a nil fallback anyway
+			core.ValidationRecord{
+				AddressUsed: v6,
+			},
+			nil,
+		},
+	}
+
+	for _, tc := range testcases {
+		result := fallbackAddress(tc.input)
+		test.Assert(t, result.Equal(tc.result),
+			fmt.Sprintf("wrong fallbackAddress, expected %#v, got %#v", tc.result, result))
+	}
+}
+
+func TestFallbackDialer(t *testing.T) {
+	// Create a test VA
+	va, _, _ := setup()
+
+	// Create a new challenge to use for the httpSrv
+	chall := core.HTTPChallenge01()
+	setChallengeToken(&chall, core.NewToken())
+
+	// Create an HTTP test server, this will be bound on 127.0.0.1 (e.g. IPv4
+	// only!)
+	hs := httpSrv(t, chall.Token)
+	defer hs.Close()
+
+	// Figure out what port the test server is on, and configure the VA to use
+	// that for HTTP challenges
+	port, err := getPort(hs)
+	test.AssertNotError(t, err, "failed to get test server port")
+	va.httpPort = port
+
+	// Create an identifier for a host that has an IPv6 and an IPv4 address. Since
+	// there's no server listening on the IPv6 host we expect that the initial
+	// request will fail. Without the IPv6First feature enabled this will mean the
+	// validation is expected to fail.
+	host := "ipv4.and.ipv6.localhost"
+	ident = core.AcmeIdentifier{Type: core.IdentifierDNS, Value: host}
+	_, prob := va.validateChallenge(ctx, ident, chall)
+	test.Assert(t, prob != nil, "validation succeeded for an IPv6 address without a server")
+	test.AssertEquals(t, prob.Type, probs.ConnectionProblem)
+
+	// Enable the IPv6 First feature
+	_ = features.Set(map[string]bool{"IPv6First": true})
+	defer features.Reset()
+
+	// The validation is expected to succeed now that IPv6First is enabled by the
+	// fallback to the IPv4 address that has a test server waiting
+	_, prob = va.validateChallenge(ctx, ident, chall)
+	test.Assert(t, prob == nil, "validation failed with IPv6 fallback to IPv4")
+}
+
+func TestFallbackTLS(t *testing.T) {
+	// Create a test VA
+	va, _, _ := setup()
+
+	// Create a new challenge to use for the httpSrv
+	chall := createChallenge(core.ChallengeTypeTLSSNI01)
+	setChallengeToken(&chall, core.NewToken())
+
+	// Create a TLS SNI 01 test server, this will be bound on 127.0.0.1 (e.g. IPv4
+	// only!)
+	hs := tlssni01Srv(t, chall)
+	defer hs.Close()
+
+	// Figure out what port the test server is on, and configure the VA to use
+	// that for TLS challenges
+	port, err := getPort(hs)
+	test.AssertNotError(t, err, "failed to get test server port")
+	va.tlsPort = port
+
+	// Create an identifier for a host that has an IPv6 and an IPv4 address. Since
+	// there's no server listening on the IPv6 host we expect that the initial
+	// request will fail. Without the IPv6First feature enabled this will mean the
+	// validation is expected to fail.
+	host := "ipv4.and.ipv6.localhost"
+	ident = core.AcmeIdentifier{Type: core.IdentifierDNS, Value: host}
+	_, prob := va.validateChallenge(ctx, ident, chall)
+	test.Assert(t, prob != nil, "validation succeeded for an IPv6 address without a server")
+	test.AssertEquals(t, prob.Type, probs.ConnectionProblem)
+
+	// Enable the IPv6 First feature
+	_ = features.Set(map[string]bool{"IPv6First": true})
+	defer features.Reset()
+
+	// The validation is expected to succeed now that IPv6First is enabled by the
+	// fallback to the IPv4 address that has a test server waiting
+	_, prob = va.validateChallenge(ctx, ident, chall)
+	test.Assert(t, prob == nil, "validation failed with IPv6 fallback to IPv4")
 }

@@ -148,8 +148,10 @@ func (d *dialer) Dial(_, _ string) (net.Conn, error) {
 	// address available to try
 	if err != nil && features.Enabled(features.IPv6First) {
 		fallback := fallbackAddress(d.record)
-		d.record.AddressUsed = fallback
-		return realDialer.Dial("tcp", net.JoinHostPort(fallback.String(), d.record.Port))
+		if fallback != nil {
+			d.record.AddressUsed = fallback
+			conn, err = realDialer.Dial("tcp", net.JoinHostPort(fallback.String(), d.record.Port))
+		}
 	}
 
 	return conn, err

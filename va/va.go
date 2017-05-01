@@ -137,6 +137,7 @@ func (va ValidationAuthorityImpl) getAddr(ctx context.Context, hostname string) 
 
 type dialer struct {
 	record core.ValidationRecord
+	stats  metrics.Scope
 }
 
 func (d *dialer) Dial(_, _ string) (net.Conn, error) {
@@ -150,6 +151,7 @@ func (d *dialer) Dial(_, _ string) (net.Conn, error) {
 		if fallback := fallbackAddress(d.record); fallback != nil {
 			d.record.AddressesTried = append(d.record.AddressesTried, d.record.AddressUsed)
 			d.record.AddressUsed = fallback
+			d.stats.Inc("IPv4Fallback", 1)
 			conn, err = realDialer.Dial("tcp", net.JoinHostPort(fallback.String(), d.record.Port))
 		}
 	}
@@ -187,6 +189,7 @@ func (va *ValidationAuthorityImpl) resolveAndConstructDialer(ctx context.Context
 			Hostname: name,
 			Port:     strconv.Itoa(port),
 		},
+		stats: va.stats,
 	}
 
 	addr, allAddrs, err := va.getAddr(ctx, name)
@@ -388,6 +391,7 @@ func (va *ValidationAuthorityImpl) tryGetTLSSNICerts(ctx context.Context, identi
 			thisRecord.AddressesTried = append(thisRecord.AddressesTried, thisRecord.AddressUsed)
 			hostPort = net.JoinHostPort(fallback.String(), portString)
 			thisRecord.AddressUsed = fallback
+			va.stats.Inc("IPv4Fallback", 1)
 			certs, problem = va.getTLSSNICerts(hostPort, identifier, challenge, zName)
 		}
 	}

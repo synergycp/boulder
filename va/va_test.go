@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/jmhodges/clock"
 	"github.com/miekg/dns"
 	"golang.org/x/net/context"
@@ -33,6 +34,7 @@ import (
 	"github.com/letsencrypt/boulder/features"
 	blog "github.com/letsencrypt/boulder/log"
 	"github.com/letsencrypt/boulder/metrics"
+	"github.com/letsencrypt/boulder/metrics/mock_metrics"
 	"github.com/letsencrypt/boulder/mocks"
 	"github.com/letsencrypt/boulder/probs"
 	"github.com/letsencrypt/boulder/test"
@@ -1212,6 +1214,14 @@ func TestFallbackDialer(t *testing.T) {
 	_ = features.Set(map[string]bool{"IPv6First": true})
 	defer features.Reset()
 
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	scope := mock_metrics.NewMockScope(ctrl)
+	va.stats = scope
+
+	// We expect the IPV4 Fallback stat to be incremented
+	scope.EXPECT().Inc("IPv4Fallback", int64(1)).Return(nil)
+
 	// The validation is expected to succeed now that IPv6First is enabled by the
 	// fallback to the IPv4 address that has a test server waiting
 	records, prob = va.validateChallenge(ctx, ident, chall)
@@ -1264,6 +1274,14 @@ func TestFallbackTLS(t *testing.T) {
 	// Enable the IPv6 First feature
 	_ = features.Set(map[string]bool{"IPv6First": true})
 	defer features.Reset()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	scope := mock_metrics.NewMockScope(ctrl)
+	va.stats = scope
+
+	// We expect the IPV4 Fallback stat to be incremented
+	scope.EXPECT().Inc("IPv4Fallback", int64(1)).Return(nil)
 
 	// The validation is expected to succeed now that IPv6First is enabled by the
 	// fallback to the IPv4 address that has a test server waiting

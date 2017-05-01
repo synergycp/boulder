@@ -1198,9 +1198,15 @@ func TestFallbackDialer(t *testing.T) {
 	// validation is expected to fail.
 	host := "ipv4.and.ipv6.localhost"
 	ident = core.AcmeIdentifier{Type: core.IdentifierDNS, Value: host}
-	_, prob := va.validateChallenge(ctx, ident, chall)
+	records, prob := va.validateChallenge(ctx, ident, chall)
 	test.Assert(t, prob != nil, "validation succeeded for an IPv6 address without a server")
 	test.AssertEquals(t, prob.Type, probs.ConnectionProblem)
+	// We expect one validation record to be present
+	test.AssertEquals(t, len(records), 1)
+	// We expect that the address used was the IPv6 localhost address
+	test.AssertEquals(t, records[0].AddressUsed.String(), "::1")
+	// We expect that zero addresses were tried before the address used
+	test.AssertEquals(t, len(records[0].AddressesTried), 0)
 
 	// Enable the IPv6 First feature
 	_ = features.Set(map[string]bool{"IPv6First": true})
@@ -1208,8 +1214,16 @@ func TestFallbackDialer(t *testing.T) {
 
 	// The validation is expected to succeed now that IPv6First is enabled by the
 	// fallback to the IPv4 address that has a test server waiting
-	_, prob = va.validateChallenge(ctx, ident, chall)
+	records, prob = va.validateChallenge(ctx, ident, chall)
 	test.Assert(t, prob == nil, "validation failed with IPv6 fallback to IPv4")
+	// We expect one validation record to be present
+	test.AssertEquals(t, len(records), 1)
+	// We expect that the address used was the IPv4 localhost address
+	test.AssertEquals(t, records[0].AddressUsed.String(), "127.0.0.1")
+	// We expect that one address was tried before the address used
+	test.AssertEquals(t, len(records[0].AddressesTried), 1)
+	// We expect that IPv6 localhost address was tried before the address used
+	test.AssertEquals(t, records[0].AddressesTried[0].String(), "::1")
 }
 
 func TestFallbackTLS(t *testing.T) {
@@ -1237,9 +1251,15 @@ func TestFallbackTLS(t *testing.T) {
 	// validation is expected to fail.
 	host := "ipv4.and.ipv6.localhost"
 	ident = core.AcmeIdentifier{Type: core.IdentifierDNS, Value: host}
-	_, prob := va.validateChallenge(ctx, ident, chall)
+	records, prob := va.validateChallenge(ctx, ident, chall)
 	test.Assert(t, prob != nil, "validation succeeded for an IPv6 address without a server")
 	test.AssertEquals(t, prob.Type, probs.ConnectionProblem)
+	// We expect one validation record to be present
+	test.AssertEquals(t, len(records), 1)
+	// We expect that the address used was the IPv6 localhost address
+	test.AssertEquals(t, records[0].AddressUsed.String(), "::1")
+	// We expect that no addresses were tried before the address used
+	test.AssertEquals(t, len(records[0].AddressesTried), 0)
 
 	// Enable the IPv6 First feature
 	_ = features.Set(map[string]bool{"IPv6First": true})
@@ -1247,6 +1267,14 @@ func TestFallbackTLS(t *testing.T) {
 
 	// The validation is expected to succeed now that IPv6First is enabled by the
 	// fallback to the IPv4 address that has a test server waiting
-	_, prob = va.validateChallenge(ctx, ident, chall)
+	records, prob = va.validateChallenge(ctx, ident, chall)
 	test.Assert(t, prob == nil, "validation failed with IPv6 fallback to IPv4")
+	// We expect one validation record to be present
+	test.AssertEquals(t, len(records), 1)
+	// We expect that the address eventually used was the IPv4 localhost address
+	test.AssertEquals(t, records[0].AddressUsed.String(), "127.0.0.1")
+	// We expect that one address was tried before the address used
+	test.AssertEquals(t, len(records[0].AddressesTried), 1)
+	// We expect that IPv6 localhost address was tried before the address used
+	test.AssertEquals(t, records[0].AddressesTried[0].String(), "::1")
 }

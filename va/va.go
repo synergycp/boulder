@@ -148,6 +148,7 @@ func (d *dialer) Dial(_, _ string) (net.Conn, error) {
 	// address available to try
 	if err != nil && features.Enabled(features.IPv6First) {
 		if fallback := fallbackAddress(d.record); fallback != nil {
+			d.record.AddressesTried = append(d.record.AddressesTried, d.record.AddressUsed)
 			d.record.AddressUsed = fallback
 			conn, err = realDialer.Dial("tcp", net.JoinHostPort(fallback.String(), d.record.Port))
 		}
@@ -235,9 +236,11 @@ func (va *ValidationAuthorityImpl) fetchHTTP(ctx context.Context, identifier cor
 
 	dialer, prob := va.resolveAndConstructDialer(ctx, host, port)
 	dialer.record.URL = url.String()
-	validationRecords := []core.ValidationRecord{dialer.record}
+	// Start with an empty validation record list - we will add a record after
+	// each dialer.Dial()
+	validationRecords := []core.ValidationRecord{}
 	if prob != nil {
-		return nil, validationRecords, prob
+		return nil, []core.ValidationRecord{dialer.record}, prob
 	}
 
 	tr := &http.Transport{
@@ -295,6 +298,8 @@ func (va *ValidationAuthorityImpl) fetchHTTP(ctx context.Context, identifier cor
 
 		dialer, err := va.resolveAndConstructDialer(ctx, reqHost, reqPort)
 		dialer.record.URL = req.URL.String()
+		// A subsequent dialing from a redirect means adding another validation
+		// record
 		validationRecords = append(validationRecords, dialer.record)
 		if err != nil {
 			return err
@@ -309,6 +314,8 @@ func (va *ValidationAuthorityImpl) fetchHTTP(ctx context.Context, identifier cor
 		Timeout:       validationTimeout,
 	}
 	httpResponse, err := client.Do(httpRequest)
+	// Append a validation record now that we have dialed the dialer
+	validationRecords = append(validationRecords, dialer.record)
 	if err != nil {
 		va.log.Info(fmt.Sprintf("HTTP request to %s failed. err=[%#v] errStr=[%s]", url, err, err))
 		return nil, validationRecords,
@@ -378,6 +385,7 @@ func (va *ValidationAuthorityImpl) tryGetTLSSNICerts(ctx context.Context, identi
 	// address
 	if problem != nil && features.Enabled(features.IPv6First) {
 		if fallback := fallbackAddress(*thisRecord); fallback != nil {
+			thisRecord.AddressesTried = append(thisRecord.AddressesTried, thisRecord.AddressUsed)
 			hostPort = net.JoinHostPort(fallback.String(), portString)
 			thisRecord.AddressUsed = fallback
 			certs, problem = va.getTLSSNICerts(hostPort, identifier, challenge, zName)

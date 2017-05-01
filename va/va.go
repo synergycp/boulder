@@ -147,8 +147,7 @@ func (d *dialer) Dial(_, _ string) (net.Conn, error) {
 	// feature is enabled then attempt another connection if there is a fallback
 	// address available to try
 	if err != nil && features.Enabled(features.IPv6First) {
-		fallback := fallbackAddress(d.record)
-		if fallback != nil {
+		if fallback := fallbackAddress(d.record); fallback != nil {
 			d.record.AddressUsed = fallback
 			conn, err = realDialer.Dial("tcp", net.JoinHostPort(fallback.String(), d.record.Port))
 		}

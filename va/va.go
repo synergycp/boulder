@@ -142,13 +142,21 @@ type dialer struct {
 
 func (d *dialer) Dial(_, _ string) (net.Conn, error) {
 	realDialer := net.Dialer{Timeout: validationTimeout}
-	conn, err := realDialer.Dial("tcp", net.JoinHostPort(d.record.AddressUsed.String(), d.record.Port))
+	address := net.JoinHostPort(d.record.AddressUsed.String(), d.record.Port)
+	conn, err := realDialer.Dial("tcp", address)
 
 	// If there was an error connecting to the preferred address and the IPv6First
 	// feature is enabled then attempt another connection if there is a fallback
 	// address available to try
 	if err != nil && features.Enabled(features.IPv6First) {
+		fmt.Printf("Address: %s Err type: %#T Err: %#v\n", address, err, err)
+		if err, ok := err.(net.Error); ok && err.Timeout() {
+			fmt.Printf("Err was a timeout\n")
+		}
+		fmt.Printf("Error was: %s\n", err.Error())
+
 		if fallback := fallbackAddress(d.record); fallback != nil {
+			fmt.Printf("Falling back to %#v\n", fallback.String())
 			d.record.AddressesTried = append(d.record.AddressesTried, d.record.AddressUsed)
 			d.record.AddressUsed = fallback
 			d.stats.Inc("IPv4Fallback", 1)
